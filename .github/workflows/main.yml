@@ -3,8 +3,6 @@ name: Build DanikVpn APK from ZIP
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -18,42 +16,44 @@ jobs:
 
       - name: Find and extract target ZIP archive
         run: |
-          TARGET_ZIP="danikvpn-with-default-config.zip"
+          TARGET_ZIP=$(find . -not -path '*/.*' -type f -name "danikvpn-with-default-config.zip" -print -quit)
 
-          if [ -f "$TARGET_ZIP" ]; then
+          if [ -n "$TARGET_ZIP" ]; then
             echo "Найден целевой архив: $TARGET_ZIP"
             ZIP_TO_EXTRACT="$TARGET_ZIP"
           else
-            echo "Архив $TARGET_ZIP не найден. Ищем единственный .zip в корне репозитория..."
-            mapfile -t ZIPS < <(find . -maxdepth 1 -type f -name "*.zip" | sed 's|^\./||')
+            mapfile -t ZIPS < <(find . -not -path '*/.*' -type f -name "*.zip")
             COUNT=${#ZIPS[@]}
 
             if [ "$COUNT" -eq 1 ]; then
               ZIP_TO_EXTRACT="${ZIPS[0]}"
-              echo "Найден единственный архив: $ZIP_TO_EXTRACT. Собираем его."
-            elif [ "$COUNT" -eq 0 ]; then
-              echo "Ошибка: в корне репозитория нет ни одного .zip архива!"
+              echo "Найден единственный архив: $ZIP_TO_EXTRACT"
+            elif [ "$COUNT" -gt 1 ]; then
+              echo "Ошибка: найдено несколько .zip архивов ($COUNT): ${ZIPS[*]}"
               exit 1
             else
-              echo "Ошибка: найдено несколько .zip архивов ($COUNT): ${ZIPS[*]}"
-              echo "Оставьте один архив или переименуйте нужный в $TARGET_ZIP"
-              exit 1
+              echo "ZIP архив не найден, проверяем распакованный проект..."
+              ZIP_TO_EXTRACT=""
             fi
           fi
 
-          mkdir -p extracted_project
-          unzip -q "$ZIP_TO_EXTRACT" -d extracted_project
+          if [ -n "$ZIP_TO_EXTRACT" ]; then
+            mkdir -p extracted_project
+            unzip -q "$ZIP_TO_EXTRACT" -d extracted_project
+            SEARCH_ROOT="extracted_project"
+          else
+            SEARCH_ROOT="."
+          fi
 
-          # Автоматически находим папку с проектом внутри распакованного архива (например, extracted_project/DanikVpn)
-          PROJECT_DIR=$(find extracted_project -maxdepth 3 \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -print -quit | xargs -r dirname)
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "Ошибка: внутри архива не найден проект Gradle (settings.gradle.kts)."
+          SETTINGS_FILE=$(find "$SEARCH_ROOT" -maxdepth 4 \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -print -quit)
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "Ошибка: не найден ни .zip архив, ни файл settings.gradle.kts! Загрузите danikvpn-with-default-config.zip в репозиторий."
             exit 1
           fi
 
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
           echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
-          echo "Корневая папка проекта: $PROJECT_DIR"
+          echo "Папка проекта для сборки: $PROJECT_DIR"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
