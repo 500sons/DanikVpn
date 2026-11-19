@@ -32,7 +32,6 @@ jobs:
               echo "Ошибка: найдено несколько .zip архивов ($COUNT): ${ZIPS[*]}"
               exit 1
             else
-              echo "ZIP архив не найден, проверяем распакованный проект..."
               ZIP_TO_EXTRACT=""
             fi
           fi
@@ -47,13 +46,17 @@ jobs:
 
           SETTINGS_FILE=$(find "$SEARCH_ROOT" -maxdepth 4 \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -print -quit)
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "Ошибка: не найден ни .zip архив, ни файл settings.gradle.kts! Загрузите danikvpn-with-default-config.zip в репозиторий."
+            echo "Ошибка: не найден settings.gradle.kts"
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS_FILE")
           echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
-          echo "Папка проекта для сборки: $PROJECT_DIR"
+
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ] && ! grep -q "PROPERTY_SPECIAL_USE_FGS_SUBTYPE" "$MANIFEST"; then
+            sed -i 's|</service>|<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="vpn" /></service>|g' "$MANIFEST"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -61,28 +64,23 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+          add-to-path: true
 
-      - name: Build Debug & Release APK
+      - name: Build Debug APK
         run: |
           cd "$PROJECT_DIR"
-          gradle assembleDebug --stacktrace
-          gradle assembleRelease --stacktrace
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: DanikVpn-debug-apk
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
-
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: DanikVpn-release-apk
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/*.apk
