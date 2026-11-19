@@ -1,0 +1,88 @@
+name: Build DanikVpn APK from ZIP
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract target ZIP archive
+        run: |
+          TARGET_ZIP="danikvpn-with-default-config.zip"
+
+          if [ -f "$TARGET_ZIP" ]; then
+            echo "Найден целевой архив: $TARGET_ZIP"
+            ZIP_TO_EXTRACT="$TARGET_ZIP"
+          else
+            echo "Архив $TARGET_ZIP не найден. Ищем единственный .zip в корне репозитория..."
+            mapfile -t ZIPS < <(find . -maxdepth 1 -type f -name "*.zip" | sed 's|^\./||')
+            COUNT=${#ZIPS[@]}
+
+            if [ "$COUNT" -eq 1 ]; then
+              ZIP_TO_EXTRACT="${ZIPS[0]}"
+              echo "Найден единственный архив: $ZIP_TO_EXTRACT. Собираем его."
+            elif [ "$COUNT" -eq 0 ]; then
+              echo "Ошибка: в корне репозитория нет ни одного .zip архива!"
+              exit 1
+            else
+              echo "Ошибка: найдено несколько .zip архивов ($COUNT): ${ZIPS[*]}"
+              echo "Оставьте один архив или переименуйте нужный в $TARGET_ZIP"
+              exit 1
+            fi
+          fi
+
+          mkdir -p extracted_project
+          unzip -q "$ZIP_TO_EXTRACT" -d extracted_project
+
+          # Автоматически находим папку с проектом внутри распакованного архива (например, extracted_project/DanikVpn)
+          PROJECT_DIR=$(find extracted_project -maxdepth 3 \( -name "settings.gradle.kts" -o -name "settings.gradle" \) -print -quit | xargs -r dirname)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "Ошибка: внутри архива не найден проект Gradle (settings.gradle.kts)."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "Корневая папка проекта: $PROJECT_DIR"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build Debug & Release APK
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --stacktrace
+          gradle assembleRelease --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DanikVpn-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DanikVpn-release-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/*.apk
